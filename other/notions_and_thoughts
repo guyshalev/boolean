@@ -1,0 +1,16 @@
+***********************************************
+***********************************************
+***********************************************
+
+From 2016, regarding sensitivity vs. granularity vs. degree:
+>>> #take a dictator function. for every a word in the Hamming code, flip the word. we have increased the sensitivity of unflipped word by at most 1, but maybe by alot the sensitivity of flipped words.
+>>> Is there a way to flip only distant words, without harming the sensitivity too much?
+>>>
+>>> #the counterexample is bad. because the sensitivity of the flipped point is now really high
+>>> #yet, it is in a way, "quite sensitive", but totally not granular...
+>>> #check what is up with product and harkava of functions with low sensitivity (zero-sensitivity?)
+>>> #is there some type of almost-k-granular?
+
+***********************************************
+***********************************************
+***********************************************
