@@ -8,7 +8,7 @@ This has two reasons:
 import numpy
 import itertools
 import random
-from utils import popcount, indices_and_n_to_num, num_and_n_to_indices
+from utils import popcount, indices_and_n_to_num, num_and_n_to_indices, out
 
 
 class Point(object):
@@ -41,10 +41,11 @@ class Point(object):
         return not self.__eq__(other)
 
 
-def get_upper_neighbors(point, all_points):
+def get_upper_neighbours(point, ctx):
     """gets a Point, returns all neighbors from one level above
     all_points is a dictionary from num to point"""
-    assert point in all_points
+    all_points = ctx.NUM_TO_POINT
+    assert point in all_points.values()
     res = []
     for i in xrange(point.n):
         if point.num ^ 2 ** (point.n - 1 - i) > point.num: # i'th from left is off
@@ -53,10 +54,11 @@ def get_upper_neighbors(point, all_points):
     return res
 
 
-def get_lower_neighbors(point, all_points):
+def get_lower_neighbours(point, ctx):
     """gets a Point, returns all neighbors from one level below
     all_points is a dictionary from num to point"""
-    assert point in all_points
+    all_points = ctx.NUM_TO_POINT
+    assert point in all_points.values()
     res = []
     for i in xrange(point.n):
         if point.num ^ 2 ** (point.n - 1 - i) < point.num: # i'th from left is on
@@ -65,35 +67,38 @@ def get_lower_neighbors(point, all_points):
     return res
 
 
-def get_all_upper_neighbours(point, all_points):
+def get_all_upper_neighbours(point, ctx):
     """gets a Point, returns all points that are above it
     all_points is a dictionary from num to point"""
-    return get_all_directional_neighbours(point, all_points, direction="UPPER")
+    return get_all_directional_neighbours(point, ctx, direction="UPPER")
 
 
-def get_all_lower_neighbours(point, all_points):
+def get_all_lower_neighbours(point, ctx):
     """gets a Point, returns all points that are below it
     all_points is a dictionary from num to point"""
-    return get_all_directional_neighbours(point, all_points, direction="LOWER")
+    return get_all_directional_neighbours(point, ctx, direction="LOWER")
 
 
-def get_all_directional_neighbours(point, all_points, direction):
-    # If we have k zeros in the point, we expect 2**k - 1 points (because we exclude the point itself).
+def get_all_directional_neighbours(point, ctx, direction):
+    # If we have k zeros in the point, we expect 2**k points (because we include the point itself).
+    all_points = ctx.NUM_TO_POINT
     one_indices = num_and_n_to_indices(point.num, point.n)
-    zero_indices = [x for x in xrange(n) if x not in one_indices]
+    zero_indices = [x for x in xrange(point.n) if x not in one_indices]
     indices_to_flip = []
     if direction == "UPPER":
         indices_to_flip = zero_indices
     elif direction == "LOWER":
         indices_to_flip = one_indices
+    else:
+        print "no direction!!!!!"
+        exit(1)
 
     res = set()
-    for num_to_flip in xrange(1, len(indices_to_flip) + 1):
+    for num_to_flip in xrange(len(indices_to_flip) + 1):
         for indices in itertools.combinations(indices_to_flip, num_to_flip):
             num_diff = indices_and_n_to_num(indices, point.n)
             new_num = point.num ^ num_diff
-            return res.add(all_points[new_num])
-
+            res.add(all_points[new_num])
     return res
 
 
@@ -136,7 +141,7 @@ class BooleanFunction(object):
 
     def is_monotone(self):
         for point, val in self.points_to_values.iteritems():
-            upper_neighs = get_upper_neighbors(point, ctx.NUM_TO_POINT)
+            upper_neighs = get_upper_neighbours(point, ctx)
             for un in upper_neighs:
                 if self[un] > val: #reverse because +1,-1
                     print point, val, un, self[un]
@@ -162,10 +167,29 @@ def multiply_functions(bool_func_1, bool_func_2):
     return BooleanFunction(bool_func_1.ctx, new_points_to_values)
 
 
-def sample_monotone_function(ctx, max_pq = 0.1):
+def sample_monotone_function(ctx):
     # This raises a natural question - how to randomly sample a monotone function?
-    pass
+    # for now, we will start with the zero function, randomize point, and flip them with some probability
+    points_to_values = {p: 1 for p in ctx.NUM_TO_POINT.values()}
+    n = ctx.N
+    for num_flip in xrange(max(2 ** int(n / 2), 100)): # for now, magic numbers...
+        num = random.randint(0, 2 ** n - 1)
+        point = ctx.NUM_TO_POINT[num]
+        level = popcount(num)
+        dist_from_mid_level = 1 + abs(level - float(n) / 2)
+        # TODO - maybe flip with respect to level (extreme levels don't flip
+        to_flip = random.random() < 0.5 * (1 / dist_from_mid_level) ** 2
+        if to_flip:
+            if points_to_values[point] == 1:
+                all_to_flip = get_all_upper_neighbours(point, ctx)
+                for p_to_flip in all_to_flip:
+                    points_to_values[p_to_flip] = -1
+            else:
+                all_to_flip = get_all_lower_neighbours(point, ctx)
+                for p_to_flip in all_to_flip:
+                    points_to_values[p_to_flip] = 1
 
+    return BooleanFunction(ctx, points_to_values)
 
 def sample_random_function(ctx):
     points_to_values = {p: 1 - 2 * random.randint(0, 1) for p in ctx.NUM_TO_POINT.values()}
@@ -174,8 +198,99 @@ def sample_random_function(ctx):
 
 def generate_majority_function(ctx):
     assert ctx.N % 2 == 1
-    new_points_to_values = {p: popcount(p) for num, p in ctx.NUM_TO_POINT.iteritems()}
+    new_points_to_values = {p: -1 if (float(p.popcount) / p.n > 0.5) else 1 for p in ctx.NUM_TO_POINT.values()}
     return BooleanFunction(ctx, new_points_to_values)
+
+
+class Level(object):
+    def __init__(self, ctx, points_to_values):
+        self.ctx = ctx
+        self.k = points_to_values.keys()[0].popcount
+        self.rep_as_num = "".join([str(b) for p, b in sorted(points_to_values.items(), key=lambda (pt, b): pt.num)])
+        self.points_to_values = points_to_values
+
+    def __str__(self):
+        res_str = ["N=" + str(ctx.N) + ", " + "K=" + str(self.k) + ":"]
+        res_str.extend([str(p) + " " + str(b) for p, b in sorted(self.points_to_values.items(), key=lambda (pt, b): pt.num)])
+        return '\n'.join(res_str)
+
+    def __hash__(self):
+        return hash(str(self))
+
+    def __eq__(self, other):
+        return self.rep_as_num == other.rep_as_num
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+
+# TESTED
+def generate_all_levels(ctx):
+    n = ctx.N
+    levels = ctx.LEVEL_TO_POINTS
+    res = [None] * (n + 1)
+    for level_num, l in levels.iteritems():
+        all_level_options = []
+        for num in xrange(2 ** len(l)):
+            indices = set(num_and_n_to_indices(num, len(l)))
+            level_option = {}
+            for idx_p, p in enumerate(l):
+                level_option[p] = -1 if (idx_p in indices) else 1
+            all_level_options.append(Level(ctx, level_option))
+        res[level_num] = all_level_options
+    return res
+
+
+def levels_are_consistent(ctx, lower_level, upper_level):
+    for point, val in lower_level.points_to_values.iteritems():
+        if val == 1:
+            continue #no harm can be done
+        upper_neighbors = get_upper_neighbours(point, ctx)
+        for upper_neigh in upper_neighbors:
+            if upper_level.points_to_values[upper_neigh] == 1:
+                return False #found a counterexample to monotonicity
+    return True
+
+
+def generate_all_legal_upgrades(ctx, all_levels):
+    n = ctx.N
+    level_option_to_legal_upgrades = {}
+    for level_num in xrange(n):
+        levels_lower = all_levels[level_num]
+        levels_upper = all_levels[level_num + 1]
+        for lower_level in levels_lower:
+            lower_level_legal_upgrades = []
+            for upper_level in levels_upper:
+                if levels_are_consistent(ctx, lower_level, upper_level):
+                    lower_level_legal_upgrades.append(upper_level)
+            level_option_to_legal_upgrades[lower_level] = lower_level_legal_upgrades
+
+    return level_option_to_legal_upgrades
+
+def generate_all_monotones(ctx, all_levels, level_option_to_legal_upgrades):
+    #build iteratively, level after level...
+    n = ctx.N
+    all_monotones = [[x] for x in all_levels[0]]
+    for level in xrange(1, n + 1):
+        new_all_monotones = []
+        for partial_monotone in all_monotones:
+            highest_level = partial_monotone[-1]
+            legal_upgrades = level_option_to_legal_upgrades[highest_level]
+            for legal_upgrade in legal_upgrades:
+                new_all_monotones.append(partial_monotone[:] + [legal_upgrade])
+        all_monotones = new_all_monotones
+    # TODO - create them as BooleanFunction
+    res = []
+    for monotone in all_monotones:
+        points_to_values = {}
+        for level in monotone:
+            points_to_values.update(level.points_to_values)
+        res.append(BooleanFunction(ctx, points_to_values))
+    return res
+
+
+
+
 
 
 class GlobalContext(object):
@@ -192,18 +307,37 @@ class GlobalContext(object):
             l.sort(key=lambda p: p.num)
 
     def __getitem__(self, item):
-        if isinstance(item, Point):
-            return self.NUM_TO_POINT[num]
-        elif isinstance(item, int):
-            return self.LEVEL_TO_POINTS[item]
-        else:
-            raise ValueError()
+        return self.NUM_TO_POINT[item]
 
 
 if __name__ == "__main__":
     print "moo main"
-    N = 4
+    N = 3
     ctx = GlobalContext(N=N)
+    all_levels = generate_all_levels(ctx)
+    legal_upgrades = generate_all_legal_upgrades(ctx, all_levels)
+    all_monotones = generate_all_monotones(ctx, all_levels, legal_upgrades)
+    print len(all_monotones)
+    print all_monotones[14]
+    assert all([x.is_monotone for x in all_monotones])
+
+    
+
+
+    """
+    a = get_all_upper_neighbours(point, ctx)
+    b = get_all_lower_neighbours(point, ctx)
+    c = get_upper_neighbours(point, ctx)
+    d = get_lower_neighbours(point, ctx)
+    mon_funcs = [sample_monotone_function(ctx) for i in xrange(100)]
+    rand_funcs = [sample_random_function(ctx) for i in xrange(1000)]
+    print sum([bf.is_monotone() for bf in mon_funcs])
+    for x in [bf for bf in rand_funcs if bf.is_monotone()]:
+        print x
+    print "what"
+    mon_func = sample_monotone_function(ctx)
+    #print mon_func
+
     maj_bf = BooleanFunction(ctx, {Point(N, num) : val for num, val in zip(range(2**N), 2 * [1, 1, 1, -1, 1, -1, -1, -1])})
     print maj_bf
     print map(float, maj_bf.fft_arr)
@@ -222,4 +356,5 @@ if __name__ == "__main__":
     dual_func = generate_dual_function(random_func)
     print dual_func
     print dual_func.fft_arr
+    """
 
